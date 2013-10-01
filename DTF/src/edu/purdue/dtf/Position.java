@@ -27,4 +27,10 @@ public class Position {
 		return String.format(Locale.ENGLISH, "(%d, %d)", x, y);
 	}
 
+	@Override
+	public boolean equals(Object other) {
+		Position that = (Position) other;
+		return this.x == that.x && this.y == that.y;
+	}
+	
 }

@@ -54,7 +54,7 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 	// geometry, transformations, and rendering.
 	private World world;
 
-	// The framebuffer represents the rendered pixels that the world is drawn
+	// The frame buffer represents the rendered pixels that the world is drawn
 	// onto and then displayed in the game view.
 	private FrameBuffer fb;
 
@@ -88,6 +88,12 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 	// player chooses the from part of one of their moves.
 	private Object3D selector = null;
 
+	// Turn indicator is a 3D object that is used to indicate whose turn it is.
+	private Object3D turnIndicatorGold = null;
+	private Object3D turnIndicatorRed = null;
+	
+	private final SimpleVector cameraPosition = new SimpleVector(5.5f, 4.0f, -13.0f);
+	
 	// The moveStart position is used to capture the first part of a users
 	// move. When the user first touches the screen it indicates the piece
 	// they want to try to move, and when they click again, hopefully on a
@@ -159,8 +165,8 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 	private Position screenToBoard(int x, int y) {
 		SimpleVector v = Interact2D
 				.reproject2D3DWS(world.getCamera(), fb, x, y);
-		v.scalarMul(13.0f);
-		v.add(new SimpleVector(5.0f, 4.0f, 0.0f));
+		v.scalarMul(-cameraPosition.z);
+		v.add(new SimpleVector(cameraPosition.x, cameraPosition.y, 0.0f));
 		int boardX = (int) Math.round(v.x);
 		int boardY = (int) Math.round(v.y);
 		return new Position(boardX, boardY);
@@ -204,6 +210,7 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 	@Override
 	public void onDrawFrame(GL10 gl) {
 		fb.clear(backgroundColor);
+		updateTurnIndicator();
 		world.renderScene(fb);
 		world.draw(fb);
 		fb.display();
@@ -222,12 +229,18 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 		Object3D piece = pieces[a.x][a.y];
 		pieces[a.x][a.y] = null;
 		pieces[b.x][b.y] = piece;
-		Object3D template = pieceTemplates.get(board.getPiece(b));
+		Object3D template = pieceTemplates.get(board.getPiece(b).getTemplateCode());
 		piece.clearTranslation();
 		piece.translate(template.getTranslation());
 		piece.translate(b.x, b.y, 0.0f);
 	}
 
+	private void updateTurnIndicator() {
+		boolean goldsTurn = "G".equals(board.getWhoseTurn());
+		turnIndicatorGold.setVisibility(goldsTurn);
+		turnIndicatorRed.setVisibility(!goldsTurn);
+	}
+	
 	/**
 	 * Called when the user touches the view to interact with the game.
 	 */
@@ -243,7 +256,12 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 					selector.setVisibility(true);
 				}
 			} else {
-				if (board.isValidMove(moveStart, move)) {
+				if (moveStart.equals(move)) {
+					// choosing same square deselects the piece
+					moveStart = null;
+					selector.setVisibility(false);
+				}
+				else if (board.isValidMove(moveStart, move)) {
 					board.moveUnit(moveStart, move);
 					moveStart = null;
 					selector.setVisibility(false);
@@ -354,6 +372,7 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 		initSquares();
 		initPieceTemplates();
 		initSelector();
+		initTurnIndicator();
 		initPieces();
 
 		// temp code to check if texture names are coming in from object loader
@@ -362,7 +381,7 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 		}
 
 		Camera cam = world.getCamera();
-		cam.setPosition(new SimpleVector(5.0f, 4.0f, -13.0f));
+		cam.setPosition(cameraPosition);
 		cam.setOrientation(new SimpleVector(0.0f, 0.0f, 1.0f),
 				new SimpleVector(0.0f, -1.0f, 0.0f));
 
@@ -394,14 +413,27 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 		world.addObject(selector);
 	}
 
+	private void initTurnIndicator() throws IOException {
+		turnIndicatorGold = loadObject3D(R.raw.turn_indicator_gold);
+		turnIndicatorGold.strip();
+		turnIndicatorGold.build();
+		turnIndicatorGold.translate(13.0f, 4.0f, 0.0f);
+		world.addObject(turnIndicatorGold);
+		turnIndicatorRed = loadObject3D(R.raw.turn_indicator_red);
+		turnIndicatorRed.strip();
+		turnIndicatorRed.build();
+		turnIndicatorRed.translate(13.0f, 4.0f, 0.0f);
+		world.addObject(turnIndicatorRed);
+	}
+
 	private void initPieces() throws IOException {
 		pieces = new Object3D[board.getWidth()][board.getHeight()];
 		for (int y = 0; y < board.getHeight(); ++y) {
 			for (int x = 0; x < board.getWidth(); ++x) {
 				Position p = new Position(x, y);
-				String piece = board.getPiece(p);
+				Piece piece = board.getPiece(p);
 				if (piece != null) {
-					Object3D template = pieceTemplates.get(piece);
+					Object3D template = pieceTemplates.get(piece.getTemplateCode());
 					pieces[x][y] = template.cloneObject();
 					pieces[x][y].translate((float) x, (float) y, 0.0f);
 					world.addObject(pieces[x][y]);

@@ -24,8 +24,8 @@ public class Board {
 	// Each player gets so many moves (actions) per turn.
 	private static final int MOVES_PER_TURN = 3;
 
-	// Keeps track of whose turn it is in this state. Cycles between 0 and 1.
-	private int whoseTurn;
+	// Keeps track of whose turn it is in this state. Cycles between G and R.
+	private String whoseTurn;
 	
 	// Tracks how many moves the current player has left.
 	private int movesRemaining;
@@ -37,7 +37,7 @@ public class Board {
 	private List<BoardListener> listeners;
 	
 	// Stores all the per square board state.
-	private String grid[][] = null;
+	private Piece grid[][] = null;
 
 	/**
 	 * Constructs a board with the specified width and height, in terms or the
@@ -52,8 +52,8 @@ public class Board {
 	public Board(int width, int height) {
 		this.width = width;
 		this.height = height;
-		this.grid = new String[width][height];
-		this.whoseTurn = 0;
+		this.grid = new Piece[width][height];
+		this.whoseTurn = "G";
 		this.movesRemaining = Board.MOVES_PER_TURN;
 	}
 	
@@ -70,8 +70,8 @@ public class Board {
 		for (int y = 0; y < height; ++y) {
 			String[] tokens = r.readLine().split(" ");
 			for (int x = 0; x < width; ++x) {
-				String piece = tokens[x].substring(0, 2);
-				if (!"**".equals(piece)) {
+				if (!"*".equals(tokens[x].substring(0, 1))) {
+					Piece piece = new Piece(tokens[x]);
 					grid[x][y] = piece;
 					Log.d(TAG, String.format("added %s at (%d,%d)", piece, x, y));
 				}
@@ -86,7 +86,7 @@ public class Board {
 	 *            The position of the square at which the piece is sought.
 	 * @return The character code of the piece at this position.
 	 */
-	public String getPiece(Position p) {
+	public Piece getPiece(Position p) {
 		return grid[p.x][p.y];
 	}
 	
@@ -144,7 +144,7 @@ public class Board {
 	 * Switches to the other players turn.
 	 */
 	private void nextPlayer() {
-		whoseTurn = whoseTurn == 1 ? 0 : 1;
+		whoseTurn = whoseTurn.equals("G") ? "R" : "G";
 		movesRemaining = Board.MOVES_PER_TURN;
 	}
 	
@@ -186,7 +186,8 @@ public class Board {
 	 * @return True if this piece would be OK to move, false otherwise.
 	 */
 	public boolean isValidMoveStart(Position a) {
-		return isOnBoard(a) && hasPiece(a);
+		return isOnBoard(a) && hasPiece(a) 
+				&& getPiece(a).getBelongsTo().equals(getWhoseTurn());
 	}
 
 	/**
@@ -196,7 +197,8 @@ public class Board {
 	 * @return
 	 */
 	public boolean isValidMove(Position a, Position b) {
-		return isOnBoard(a) && isOnBoard(b) && hasPiece(a) && !hasPiece(b);
+		return isOnBoard(a) && isOnBoard(b) && hasPiece(a) && !hasPiece(b) 
+				&& getPiece(a).getBelongsTo().equals(getWhoseTurn());
 	}
 	
 	/**
@@ -213,5 +215,12 @@ public class Board {
 		listeners.add(listener);
 	}
 
-	
+	/**
+	 * Tells whose turn it is to move.
+	 * 
+	 * @return G if its the gold player's turn, R if it's red's.
+	 */
+	public String getWhoseTurn() {
+		return whoseTurn;
+	}
 }
