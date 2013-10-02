@@ -3,7 +3,9 @@ package edu.purdue.dtf;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.Map;
+import java.util.Queue;
 
 import javax.microedition.khronos.egl.EGL10;
 import javax.microedition.khronos.egl.EGLConfig;
@@ -46,8 +48,11 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 
 	// Float copy of PI constant for piece rotation and so forth.
 	private static float PI = (float) Math.PI;
-	
-	
+
+	// Represents a fully opaque transparency setting, which is useful for
+	// just turning on blending mode without making the object transparent.
+	private static final int FULLY_OPAQUE = 255;
+
 	private static GameView master = null;
 
 	// The World object is the main object in jPCT that coordinates all the
@@ -91,29 +96,43 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 	// Turn indicator is a 3D object that is used to indicate whose turn it is.
 	private Object3D turnIndicatorGold = null;
 	private Object3D turnIndicatorRed = null;
-	
-	private final SimpleVector cameraPosition = new SimpleVector(5.5f, 4.0f, -13.0f);
-	
+
+	// Win overlays are displayed when somebody wins the game.
+	private Map<String, Object3D> winOverlays;
+
+	private final SimpleVector cameraPosition = new SimpleVector(5.5f, 4.0f,
+			-13.0f);
+
 	// The moveStart position is used to capture the first part of a users
 	// move. When the user first touches the screen it indicates the piece
 	// they want to try to move, and when they click again, hopefully on a
 	// valid target for whichever piece they've chosen, it either moves there
 	// or executes the ability they chose.
 	private Position moveStart;
-	
+
 	// Board is a reference to the main game board, which represents the model
 	// that this view is representing visually for the user.
 	private Board board;
 
 	private Context context;
 
-	// The frames per second that the view is able to render the game. This is 
+	// The frames per second that the view is able to render the game. This is
 	// a standard measure of performance.
 	private int fps = 0;
-	
+
 	// The prior time captured during the last update, to help with calculation
 	// of the fps mentioned above.
 	private long time = System.currentTimeMillis();
+
+	// Temporary fix to ensure onDrawFrame doesn't generate null pointer
+	// exceptions because it runs before all objects are loaded. Better way
+	// would be to investigate and figure out a better way to load.
+	private boolean fullyLoaded = false;
+
+	// Queue of actions to take on the draw thread, that are triggered from
+	// the UI thread. This is particularly important to avoid trying to render
+	// objects we have removed from the world.
+	private Queue<Runnable> pendingUpdates = new LinkedList<Runnable>();
 
 	/**
 	 * Constructs a new GameView.
@@ -144,7 +163,8 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 	/**
 	 * Sets the board that this view is supposed to be displaying.
 	 * 
-	 * @param board The board to visualize.
+	 * @param board
+	 *            The board to visualize.
 	 */
 	public void setBoard(Board board) {
 		// moved out of constructor because it was complaining in a warning
@@ -209,12 +229,21 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 	 */
 	@Override
 	public void onDrawFrame(GL10 gl) {
+		if (!fullyLoaded)
+			return;
+		while (!pendingUpdates.isEmpty()) {
+			pendingUpdates.remove().run();
+		}
 		fb.clear(backgroundColor);
 		updateTurnIndicator();
 		world.renderScene(fb);
 		world.draw(fb);
 		fb.display();
 		updateFPS();
+	}
+
+	private Object3D getPiece(Position a) {
+		return pieces[a.x][a.y];
 	}
 
 	/**
@@ -225,14 +254,27 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 	 * @param b
 	 *            The position to move to.
 	 */
-	public void onPieceMoved(Position a, Position b) {
-		Object3D piece = pieces[a.x][a.y];
-		pieces[a.x][a.y] = null;
-		pieces[b.x][b.y] = piece;
-		Object3D template = pieceTemplates.get(board.getPiece(b).getTemplateCode());
-		piece.clearTranslation();
-		piece.translate(template.getTranslation());
-		piece.translate(b.x, b.y, 0.0f);
+	public void onPieceMoved(final Position a, final Position b) {
+		pendingUpdates.add(new Runnable() {
+			public void run() {
+				Object3D piece = pieces[a.x][a.y];
+
+				if (getPiece(b) != null)
+					world.removeObject(getPiece(b));
+
+				pieces[a.x][a.y] = null;
+				pieces[b.x][b.y] = piece;
+				Object3D template = pieceTemplates.get(board.getPiece(b)
+						.getTemplateCode());
+				piece.clearTranslation();
+				piece.translate(template.getTranslation());
+				piece.translate(b.x, b.y, 0.0f);
+
+				if (board.isGameOver()) {
+					winOverlays.get(board.getWinner()).setVisibility(true);
+				}
+			}
+		});
 	}
 
 	private void updateTurnIndicator() {
@@ -240,34 +282,75 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 		turnIndicatorGold.setVisibility(goldsTurn);
 		turnIndicatorRed.setVisibility(!goldsTurn);
 	}
-	
+
+	/**
+	 * Called onTouch in the normal game playing condition.
+	 * 
+	 * @param view
+	 *            The view from onTouch.
+	 * @param e
+	 *            The event from onTouch.
+	 * @return The return value for onTouch.
+	 */
+	public boolean onTouchMove(View view, MotionEvent e) {
+		Position move = screenToBoard((int) e.getX(), (int) e.getY());
+		if (moveStart == null) {
+			if (board.isValidMoveStart(move)) {
+				moveStart = move;
+				selector.clearTranslation();
+				selector.translate((float) move.x, (float) move.y, 0.0f);
+				selector.setVisibility(true);
+			}
+		} else {
+			if (moveStart.equals(move)) {
+				// choosing same square deselects the piece
+				moveStart = null;
+				selector.setVisibility(false);
+			} else if (board.isValidMove(moveStart, move)) {
+				board.moveUnit(moveStart, move);
+				moveStart = null;
+				selector.setVisibility(false);
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * Called onTouch in the win condition.
+	 * 
+	 * @param view
+	 *            The view from onTouch.
+	 * @param e
+	 *            The event from onTouch.
+	 * @return The return value for onTouch.
+	 */
+	private boolean onTouchWin(View view, MotionEvent e) {
+		pendingUpdates.add(new Runnable() {
+			public void run() {
+				try {
+					winOverlays.get(board.getWinner()).setVisibility(false);
+					board.setFromStream(getResources().openRawResource(
+							R.raw.board));
+					initPieces();
+				} catch (IOException ex) {
+					// TODO fix me (should not reload from stream)
+				}
+			}
+		});
+		return true;
+	}
+
 	/**
 	 * Called when the user touches the view to interact with the game.
 	 */
 	public boolean onTouch(View view, MotionEvent e) {
 		switch (e.getAction()) {
 		case MotionEvent.ACTION_DOWN:
-			Position move = screenToBoard((int) e.getX(), (int) e.getY());
-			if (moveStart == null) {
-				if (board.isValidMoveStart(move)) {
-					moveStart = move;
-					selector.clearTranslation();
-					selector.translate((float) move.x, (float) move.y, 0.0f);
-					selector.setVisibility(true);
-				}
+			if (!board.isGameOver()) {
+				return onTouchMove(view, e);
 			} else {
-				if (moveStart.equals(move)) {
-					// choosing same square deselects the piece
-					moveStart = null;
-					selector.setVisibility(false);
-				}
-				else if (board.isValidMove(moveStart, move)) {
-					board.moveUnit(moveStart, move);
-					moveStart = null;
-					selector.setVisibility(false);
-				}
+				return onTouchWin(view, e);
 			}
-			return true;
 		case MotionEvent.ACTION_UP:
 			return true;
 		case MotionEvent.ACTION_MOVE:
@@ -310,11 +393,15 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 	 * @return
 	 * @throws IOException
 	 */
-	private Object3D loadObject3D(int id) throws IOException {
+	private Object3D loadObject3D(int id, float scale) throws IOException {
 		InputStream in = getResources().openRawResource(id);
-		Object3D objects[] = Loader.load3DS(in, 1.0f);
+		Object3D objects[] = Loader.load3DS(in, scale);
 		in.close();
 		return objects[0];
+	}
+
+	private Object3D loadObject3D(int id) throws IOException {
+		return loadObject3D(id, 1.0f);
 	}
 
 	/**
@@ -373,6 +460,7 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 		initPieceTemplates();
 		initSelector();
 		initTurnIndicator();
+		initWinOverlays();
 		initPieces();
 
 		// temp code to check if texture names are coming in from object loader
@@ -398,6 +486,8 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 			// Logger.log("Saving master Activity!");
 			master = this;
 		}
+
+		fullyLoaded = true;
 
 	}
 
@@ -426,14 +516,48 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 		world.addObject(turnIndicatorRed);
 	}
 
+	private void initWinOverlay(String key, int id) throws IOException {
+		float scale = 9.0f;
+		SimpleVector pos = new SimpleVector(cameraPosition);
+		pos.z += 10.0f;
+		Object3D overlay = loadObject3D(id, scale);
+		overlay.translate(pos);
+		overlay.setTransparency(FULLY_OPAQUE);
+		overlay.setVisibility(false);
+		winOverlays.put(key, overlay);
+		world.addObject(overlay);
+	}
+
+	private void initWinOverlays() throws IOException {
+		winOverlays = new HashMap<String, Object3D>();
+		initWinOverlay("G", R.raw.win_gold);
+		initWinOverlay("R", R.raw.win_red);
+		initWinOverlay("TIE", R.raw.win_tie);
+	}
+
+	private void clearPieces() {
+		for (int y = 0; y < board.getHeight(); ++y) {
+			for (int x = 0; x < board.getWidth(); ++x) {
+				if (pieces[x][y] != null) {
+					world.removeObject(pieces[x][y]);
+				}
+			}
+		}
+	}
+
 	private void initPieces() throws IOException {
-		pieces = new Object3D[board.getWidth()][board.getHeight()];
+		if (pieces == null) {
+			pieces = new Object3D[board.getWidth()][board.getHeight()];
+		} else {
+			clearPieces();
+		}
 		for (int y = 0; y < board.getHeight(); ++y) {
 			for (int x = 0; x < board.getWidth(); ++x) {
 				Position p = new Position(x, y);
 				Piece piece = board.getPiece(p);
 				if (piece != null) {
-					Object3D template = pieceTemplates.get(piece.getTemplateCode());
+					Object3D template = pieceTemplates.get(piece
+							.getTemplateCode());
 					pieces[x][y] = template.cloneObject();
 					pieces[x][y].translate((float) x, (float) y, 0.0f);
 					world.addObject(pieces[x][y]);
@@ -446,7 +570,7 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 		Drawable drawable = getResources().getDrawable(id);
 		Bitmap bitmap = BitmapHelper.convert(drawable);
 		bitmap = BitmapHelper.rescale(bitmap, width, height);
-		Texture texture = new Texture(bitmap);
+		Texture texture = new Texture(bitmap, true);
 		TextureManager.getInstance().addTexture(name, texture);
 	}
 
@@ -460,6 +584,17 @@ public class GameView extends GLSurfaceView implements OnTouchListener,
 		loadTexture("torch_re.bmp", R.drawable.torch_red, 64, 64);
 		loadTexture("grass_li.bmp", R.drawable.grass_light, 256, 256);
 		loadTexture("grass_da.bmp", R.drawable.grass_dark, 256, 256);
+
+		TextureManager tm = TextureManager.getInstance();
+		tm.addTexture("win_gold.png",
+				new Texture(getResources().getDrawable(R.drawable.win_gold),
+						true));
+		tm.addTexture("win_red.png",
+				new Texture(getResources().getDrawable(R.drawable.win_red),
+						true));
+		tm.addTexture("win_tie.png",
+				new Texture(getResources().getDrawable(R.drawable.win_tie),
+						true));
 	}
 
 }

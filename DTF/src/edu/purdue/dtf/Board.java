@@ -13,8 +13,8 @@ import android.util.Log;
  * Board provides the basic game grid and is responsible for all the core game
  * logic. It receives input from either human or AI based agents, and then
  * notifies all views and other listeners with something happens for which they
- * may need to update. At any given time, the board represents the current 
- * state of the game.
+ * may need to update. At any given time, the board represents the current state
+ * of the game.
  */
 public class Board {
 
@@ -26,16 +26,16 @@ public class Board {
 
 	// Keeps track of whose turn it is in this state. Cycles between G and R.
 	private String whoseTurn;
-	
+
 	// Tracks how many moves the current player has left.
 	private int movesRemaining;
-	
+
 	// The size of the board grid in terms of number of squares.
 	private int width, height;
-	
-	// Tracks whom to notify of board events like a move occured or next turn.
+
+	// Tracks whom to notify of board events like a move occurred or next turn.
 	private List<BoardListener> listeners;
-	
+
 	// Stores all the per square board state.
 	private Piece grid[][] = null;
 
@@ -56,6 +56,17 @@ public class Board {
 		this.whoseTurn = "G";
 		this.movesRemaining = Board.MOVES_PER_TURN;
 	}
+
+	/**
+	 * Removes all the pieces from the board leaving it empty.
+	 */
+	public void clearBoard() {
+		for (int y = 0; y < height; ++y) {
+			for (int x = 0; x < width; ++x) {
+				grid[x][y] = null;
+			}
+		}
+	}
 	
 	/**
 	 * Initializes the board from a text file input stream.
@@ -66,19 +77,22 @@ public class Board {
 	 *             For any errors during reading the stream.
 	 */
 	public void setFromStream(InputStream in) throws IOException {
+		clearBoard();
 		BufferedReader r = new BufferedReader(new InputStreamReader(in));
 		for (int y = 0; y < height; ++y) {
 			String[] tokens = r.readLine().split(" ");
 			for (int x = 0; x < width; ++x) {
 				if (!"*".equals(tokens[x].substring(0, 1))) {
-					Piece piece = new Piece(tokens[x]);
+					Piece piece = Piece.valueOf(tokens[x]);
 					grid[x][y] = piece;
-					Log.d(TAG, String.format("added %s at (%d,%d)", piece, x, y));
+					Log.d(TAG,
+							String.format("added %s at (%d,%d)", piece, x, y));
 				}
 			}
 		}
-	}
-
+		this.whoseTurn = "G";
+		this.movesRemaining = Board.MOVES_PER_TURN;	}
+	
 	/**
 	 * Returns the piece at position p.
 	 * 
@@ -89,7 +103,7 @@ public class Board {
 	public Piece getPiece(Position p) {
 		return grid[p.x][p.y];
 	}
-	
+
 	/**
 	 * Returns whether the game is over or not.
 	 * 
@@ -97,18 +111,47 @@ public class Board {
 	 *         false otherwise.
 	 */
 	public boolean isGameOver() {
-		return false;
+		Log.d(TAG, "Winner: " + getWinner());
+		return getWinner() != null;
 	}
-	
+
 	/**
 	 * Return the player that won the game. Only applies when the game is
 	 * actually over.
 	 * 
-	 * @return 0 if nobody has won yet, 1 if player 1 (the gold player) won, and
-	 *         2 if player 2 (the red player) won.
+	 * @return "G" or "R" depending on whether Gold or Red wins. Returns null in
+	 *         the case where the game is not over, and TIE in case there's a
+	 *         tie.
 	 */
-	public int getWinner() {
-		return 0;
+	public String getWinner() {
+		int g = 0, r = 0; // active flag counts
+		for (int y = 0; y < height; ++y) {
+			for (int x = 0; x < width; ++x) {
+				Piece p = grid[x][y];
+				if (p != null) {
+					if (p instanceof Flag) {
+						if (p.getHitPoints() > 0) {
+							if ("G".equals(p.getBelongsTo()))
+								++g;
+							else
+								++r;
+						}
+					}
+				}
+			}
+		}
+		if (g == 0 && r != 0) {
+			return "R";
+		}
+		else if (g != 0 && r == 0) {
+			return "G";
+		}
+		else if (g == 0 && r == 0) {
+			return "TIE"; // not sure if this is even possible
+		}
+		else {
+			return null;
+		}
 	}
 
 	/**
@@ -128,7 +171,7 @@ public class Board {
 	public int getHeight() {
 		return height;
 	}
-	
+
 	/**
 	 * Check if the given board position is actually on the board.
 	 * 
@@ -137,9 +180,9 @@ public class Board {
 	 * @return
 	 */
 	boolean isOnBoard(Position p) {
-		return p.x >= 0 && p.x < width && p.y >= 0 && p.y < height; 
+		return p.x >= 0 && p.x < width && p.y >= 0 && p.y < height;
 	}
-	
+
 	/**
 	 * Switches to the other players turn.
 	 */
@@ -147,7 +190,7 @@ public class Board {
 		whoseTurn = whoseTurn.equals("G") ? "R" : "G";
 		movesRemaining = Board.MOVES_PER_TURN;
 	}
-	
+
 	/**
 	 * Move the piece at position a to position b.
 	 * 
@@ -165,7 +208,7 @@ public class Board {
 		if (movesRemaining == 0)
 			nextPlayer();
 	}
-	
+
 	/**
 	 * Check if board position p currently has a piece.
 	 * 
@@ -186,21 +229,40 @@ public class Board {
 	 * @return True if this piece would be OK to move, false otherwise.
 	 */
 	public boolean isValidMoveStart(Position a) {
-		return isOnBoard(a) && hasPiece(a) 
+		return isOnBoard(a) && hasPiece(a)
 				&& getPiece(a).getBelongsTo().equals(getWhoseTurn());
 	}
 
 	/**
-	 * Checks whether a given move is valid, from point a to point b.
+	 * Calculates the distance between two positions in terms of the number of
+	 * moves it would take to get there.
+	 * 
 	 * @param a
+	 *            The first position.
 	 * @param b
+	 *            The second position.
+	 * @return The distance between the two positions.
+	 */
+	public int getDistance(Position a, Position b) {
+		return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+	}
+
+	/**
+	 * Checks whether a given move is valid, from point a to point b.
+	 * 
+	 * @param a
+	 *            The from position.
+	 * @param b
+	 *            The to position.
 	 * @return
 	 */
 	public boolean isValidMove(Position a, Position b) {
-		return isOnBoard(a) && isOnBoard(b) && hasPiece(a) && !hasPiece(b) 
-				&& getPiece(a).getBelongsTo().equals(getWhoseTurn());
+		return isOnBoard(a) && isOnBoard(b) && hasPiece(a)
+				&& (!hasPiece(b) || getPiece(a).canTake(getPiece(b)))
+				&& getPiece(a).getBelongsTo().equals(getWhoseTurn())
+				&& getDistance(a, b) == 1;
 	}
-	
+
 	/**
 	 * The given listener will be called for important game updates like when a
 	 * piece is moved on the board.
