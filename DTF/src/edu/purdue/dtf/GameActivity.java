@@ -15,7 +15,7 @@ import android.view.WindowManager;
  * between the two. It is also responsible for the top level Android
  * process lifecycle events.
  */
-public class GameActivity extends Activity {
+public final class GameActivity extends Activity {
 
 	// Tag used for logging from this class.
 	private static final String TAG = "GameActivity";
@@ -33,6 +33,7 @@ public class GameActivity extends Activity {
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
+		Log.d(TAG, "onCreate");
 		
 		// Make the game full screen, with no system UI features visible.
 		requestWindowFeature(Window.FEATURE_NO_TITLE);
@@ -60,6 +61,7 @@ public class GameActivity extends Activity {
 	@Override
 	protected void onPause() {
 		super.onPause();
+		Log.d(TAG, "onPause");
 		// pause the rendering thread and deallocate any
 		// resources not needed while not active
 		view.onPause();
@@ -70,12 +72,14 @@ public class GameActivity extends Activity {
 		super.onResume();
 		// resume the rendering thread and reinitialize any
 		// resources that were released during pause
+		Log.d(TAG, "onResume");
 		view.onResume();
 	}
 
 	@Override
 	protected void onStop() {
 		super.onStop();
+		Log.d(TAG, "onStop");
 	}
 
 }

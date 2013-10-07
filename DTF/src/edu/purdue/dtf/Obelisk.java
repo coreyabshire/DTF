@@ -1,6 +1,6 @@
 package edu.purdue.dtf;
 
-public class Obelisk extends Piece {
+public final class Obelisk extends RotatablePiece {
 
 	public Obelisk(String token) {
 		super(token);

@@ -1,6 +1,6 @@
 package edu.purdue.dtf;
 
-public class Slingshot extends Piece {
+public final class Slingshot extends RotatablePiece {
 
 	public Slingshot(String token) {
 		super(token);

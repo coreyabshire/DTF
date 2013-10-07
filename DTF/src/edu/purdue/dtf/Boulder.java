@@ -1,6 +1,6 @@
 package edu.purdue.dtf;
 
-public class Boulder extends Piece {
+public final class Boulder extends Piece {
 
 	public Boulder(String token) {
 		super(token);

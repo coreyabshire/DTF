@@ -2,16 +2,18 @@ package edu.purdue.dtf;
 
 public class Piece {
 
-	private String belongsTo;
-	private String pieceType;
-	private int hitPoints;
-	private int direction;
-
+	protected String belongsTo;
+	protected String pieceType;
+	protected int hitPoints;
+	protected Direction directionFacing;
+	protected boolean roots;
+	
 	public Piece(String token) {
 		belongsTo = token.substring(0, 1);
 		pieceType = token.substring(1, 2);
 		hitPoints = getMaxHitPoints() - Integer.parseInt(token.substring(2, 3));
-		direction = Integer.parseInt(token.substring(3, 4));
+		directionFacing = Direction.values()[Integer.parseInt(token.substring(3,4))];
+		roots = false;
 	}
 
 	public String getBelongsTo() {
@@ -30,18 +32,22 @@ public class Piece {
 		return hitPoints;
 	}
 
-	public int getDirection() {
-		return direction;
+	public Direction getDirection() {
+		return directionFacing;
 	}
-
-	public String getTemplateCode() {
-		return belongsTo + pieceType;
-	}
-
+	
 	public boolean canTake(Piece that) {
 		return getMaxHitPoints() > that.getMaxHitPoints();
 	}
 
+	public boolean hasRoots() {
+		return roots;
+	}
+	
+	public void setRoots(boolean roots) {
+		this.roots = roots;
+	}
+	
 	public static Piece valueOf(String token) {
 		switch (token.charAt(1)) {
 		case 'B':
@@ -62,4 +68,11 @@ public class Piece {
 		}
 	}
 
+	public boolean isRotatable() {
+		return false;
+	}
+	
+	public void hit(Projectile p) {
+		--hitPoints;
+	}
 }

@@ -4,6 +4,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -16,7 +17,7 @@ import android.util.Log;
  * may need to update. At any given time, the board represents the current state
  * of the game.
  */
-public class Board {
+public final class Board {
 
 	// Tag used for logging from this class.
 	private final static String TAG = "BOARD";
@@ -67,7 +68,7 @@ public class Board {
 			}
 		}
 	}
-	
+
 	/**
 	 * Initializes the board from a text file input stream.
 	 * 
@@ -91,8 +92,9 @@ public class Board {
 			}
 		}
 		this.whoseTurn = "G";
-		this.movesRemaining = Board.MOVES_PER_TURN;	}
-	
+		this.movesRemaining = Board.MOVES_PER_TURN;
+	}
+
 	/**
 	 * Returns the piece at position p.
 	 * 
@@ -124,6 +126,7 @@ public class Board {
 	 *         tie.
 	 */
 	public String getWinner() {
+		// count up all the flags that are still alive for each player
 		int g = 0, r = 0; // active flag counts
 		for (int y = 0; y < height; ++y) {
 			for (int x = 0; x < width; ++x) {
@@ -140,18 +143,15 @@ public class Board {
 				}
 			}
 		}
-		if (g == 0 && r != 0) {
+		// determine whether or not there is a winner based on those counts
+		if (g == 0 && r != 0)
 			return "R";
-		}
-		else if (g != 0 && r == 0) {
+		else if (g != 0 && r == 0)
 			return "G";
-		}
-		else if (g == 0 && r == 0) {
+		else if (g == 0 && r == 0)
 			return "TIE"; // not sure if this is even possible
-		}
-		else {
+		else
 			return null;
-		}
 	}
 
 	/**
@@ -199,11 +199,77 @@ public class Board {
 	 * @param b
 	 *            The position to move to.
 	 */
-	public void moveUnit(Position a, Position b) {
+	public void movePiece(Position a, Position b) {
 		grid[b.x][b.y] = grid[a.x][a.y];
 		grid[a.x][a.y] = null;
 		for (BoardListener listener : listeners)
 			listener.onPieceMoved(a, b);
+		--movesRemaining;
+		if (movesRemaining == 0)
+			nextPlayer();
+	}
+
+	public boolean isRotatable(Position a) {
+		return hasPiece(a) && getPiece(a).isRotatable();
+	}
+
+	public void rotatePiece(Position a, Rotation d) {
+		RotatablePiece p = (RotatablePiece) getPiece(a);
+		p.rotate(d);
+		for (BoardListener listener : listeners)
+			listener.onPieceRotated(a, d);
+		--movesRemaining;
+		if (movesRemaining == 0)
+			nextPlayer();
+	}
+
+	/**
+	 * Determine if the position contains a piece that is hittable.
+	 * 
+	 * A piece is hittable if it is not rubble (hit points > 0);
+	 * 
+	 * @param p
+	 *            The position to check.
+	 * @return True if a hittable piece is there, false otherwise.
+	 */
+	public boolean hasHittablePiece(Position p) {
+		return hasPiece(p) && getPiece(p).getHitPoints() > 0;
+	}
+
+	/**
+	 * Fires projectile p from the piece at position a.
+	 * 
+	 * Checks along the projectile path for any piece that is struck and applies
+	 * the hit if any is found. If the projectile exits the board it has no
+	 * effect.
+	 * 
+	 * @param a
+	 *            The position of the piece firing the projectile.
+	 * @param p
+	 *            The type of projectile fired.
+	 */
+	public void firePiece(Position a, Projectile p) {
+		Piece piece = getPiece(a);
+		Direction d = piece.getDirection();
+		Position pos = new Position(a);
+		List<Position> path = new ArrayList<Position>();
+		List<Direction> dirs = new ArrayList<Direction>();
+		path.add(new Position(pos));
+		while (d != null) {
+			do
+				pos = pos.add(d.getOffset());
+			while (isOnBoard(pos) && !hasHittablePiece(pos));
+			path.add(new Position(pos));
+			dirs.add(d);
+			if (isOnBoard(pos) && getPiece(pos) instanceof Reflector)
+				d = ((Reflector) getPiece(pos)).getReflection(d);
+			else 
+				d = null;
+		}
+		if (isOnBoard(pos) && hasHittablePiece(pos))
+			getPiece(pos).hit(p);
+		for (BoardListener listener : listeners)
+			listener.onProjectileFired(path, dirs, p);
 		--movesRemaining;
 		if (movesRemaining == 0)
 			nextPlayer();
