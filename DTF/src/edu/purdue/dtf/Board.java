@@ -15,7 +15,7 @@ import android.util.Log;
  * logic. It receives input from either human or AI based agents, and then
  * notifies all views and other listeners with something happens for which they
  * may need to update. At any given time, the board represents the current state
- * of the game. TESTING
+ * of the game. TESTING..
  */
 public final class Board {
 
