@@ -1,6 +1,8 @@
-package edu.purdue.dtf;
+package edu.purdue.dtf.view;
 
 import java.io.IOException;
+
+import edu.purdue.dtf.game.Board;
 
 import android.app.Activity;
 import android.content.res.Resources.NotFoundException;

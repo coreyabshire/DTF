@@ -1,4 +1,4 @@
-package edu.purdue.dtf;
+package edu.purdue.dtf.game;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -179,7 +179,7 @@ public final class Board {
 	 *            The board position to check.
 	 * @return
 	 */
-	boolean isOnBoard(Position p) {
+	public boolean isOnBoard(Position p) {
 		return p.x >= 0 && p.x < width && p.y >= 0 && p.y < height;
 	}
 

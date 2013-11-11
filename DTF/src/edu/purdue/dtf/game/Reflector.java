@@ -1,4 +1,4 @@
-package edu.purdue.dtf;
+package edu.purdue.dtf.game;
 
 public final class Reflector extends RotatablePiece {
 

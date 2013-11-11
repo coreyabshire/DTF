@@ -1,4 +1,4 @@
-package edu.purdue.dtf;
+package edu.purdue.dtf.game;
 
 import com.threed.jpct.SimpleVector;
 import static java.lang.Math.*;

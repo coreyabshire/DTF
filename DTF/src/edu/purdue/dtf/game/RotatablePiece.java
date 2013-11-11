@@ -1,6 +1,6 @@
-package edu.purdue.dtf;
+package edu.purdue.dtf.game;
 
-import static edu.purdue.dtf.Rotation.*;
+import static edu.purdue.dtf.game.Rotation.*;
 
 public class RotatablePiece extends Piece {
 

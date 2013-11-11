@@ -1,4 +1,4 @@
-package edu.purdue.dtf;
+package edu.purdue.dtf.game;
 
 import java.util.List;
 

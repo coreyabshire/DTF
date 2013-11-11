@@ -1,4 +1,4 @@
-package edu.purdue.dtf;
+package edu.purdue.dtf.game;
 
 import java.util.Locale;
 
@@ -18,12 +18,12 @@ public final class Position {
 	 * @param x The zero based column in the grid the position represents.
 	 * @param y The zero based row in the grid the position represents.
 	 */
-	Position(int x, int y) {
+	public Position(int x, int y) {
 		this.x = x;
 		this.y = y;
 	}
 	
-	Position(Position p) {
+	public Position(Position p) {
 		this.x = p.x;
 		this.y = p.y;
 	}

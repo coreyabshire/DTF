@@ -1,13 +1,12 @@
-package edu.purdue.dtf;
+package edu.purdue.dtf.view;
 
-import static edu.purdue.dtf.Rotation.CLOCKWISE;
-import static edu.purdue.dtf.Rotation.COUNTER_CLOCKWISE;
+import static edu.purdue.dtf.game.Rotation.CLOCKWISE;
+import static edu.purdue.dtf.game.Rotation.COUNTER_CLOCKWISE;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 import javax.microedition.khronos.egl.EGL10;
@@ -37,6 +36,15 @@ import com.threed.jpct.TextureManager;
 import com.threed.jpct.World;
 import com.threed.jpct.util.BitmapHelper;
 import com.threed.jpct.util.MemoryHelper;
+
+import edu.purdue.dtf.game.Board;
+import edu.purdue.dtf.game.BoardListener;
+import edu.purdue.dtf.game.Direction;
+import edu.purdue.dtf.game.Piece;
+import edu.purdue.dtf.game.Position;
+import edu.purdue.dtf.game.Projectile;
+import edu.purdue.dtf.game.Rotation;
+import edu.purdue.dtf.game.Slingshot;
 
 /**
  * GameView takes care of drawing and receiving user input. It is also
