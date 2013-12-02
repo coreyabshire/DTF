@@ -6,4 +6,9 @@ public final class Slingshot extends RotatablePiece {
 		super(token);
 	}
 
+	@Override
+	public int getMovesPerTurn() {
+		return 2;
+	}
+	
 }

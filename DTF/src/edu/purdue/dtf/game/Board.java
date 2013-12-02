@@ -7,6 +7,7 @@ import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Queue;
 
 import android.util.Log;
 
@@ -15,16 +16,20 @@ import android.util.Log;
  * logic. It receives input from either human or AI based agents, and then
  * notifies all views and other listeners with something happens for which they
  * may need to update. At any given time, the board represents the current state
- * of the game. TESTING.. Derek Test
+ * of the game.
  */
 public final class Board {
-
+	
 	// Tag used for logging from this class.
 	private final static String TAG = "BOARD";
 
 	// Each player gets so many moves (actions) per turn.
 	private static final int MOVES_PER_TURN = 3;
 
+	private static final int SHIELD_COUNTER_START = 4;
+	
+	private static final int STUN_COUNTER_START = 4;
+	
 	// Keeps track of whose turn it is in this state. Cycles between G and R.
 	private String whoseTurn;
 
@@ -36,7 +41,7 @@ public final class Board {
 
 	// Tracks whom to notify of board events like a move occurred or next turn.
 	private List<BoardListener> listeners;
-
+	
 	// Stores all the per square board state.
 	private Piece grid[][] = null;
 
@@ -189,6 +194,33 @@ public final class Board {
 	private void nextPlayer() {
 		whoseTurn = whoseTurn.equals("G") ? "R" : "G";
 		movesRemaining = Board.MOVES_PER_TURN;
+		
+		for (int y = 0; y < height; ++y) {
+			for (int x = 0; x < width; ++x) {
+				Piece p = grid[x][y];
+				if (p != null) {
+					p.moves = 0;
+					p.fired = false;
+					if (p.stunned) {
+						--p.stunCounter;
+						if (p.stunCounter <= 0) {
+							p.stunned = false;
+							for (BoardListener listener : listeners)
+								listener.onPieceUnstunned(new Position(x, y));
+						}
+					}
+					if (p.shielded) {
+						--p.shieldCounter;
+						if (p.shieldCounter <= 0) {
+							p.shielded = false;
+							for (BoardListener listener : listeners)
+								listener.onPieceUnshielded(new Position(x, y));
+						}
+					}
+				}
+			}
+		}
+
 	}
 
 	/**
@@ -202,6 +234,7 @@ public final class Board {
 	public void movePiece(Position a, Position b) {
 		grid[b.x][b.y] = grid[a.x][a.y];
 		grid[a.x][a.y] = null;
+		grid[b.x][b.y].moves++; 
 		for (BoardListener listener : listeners)
 			listener.onPieceMoved(a, b);
 		--movesRemaining;
@@ -210,7 +243,15 @@ public final class Board {
 	}
 
 	public boolean isRotatable(Position a) {
-		return hasPiece(a) && getPiece(a).isRotatable();
+		return hasPiece(a) && getPiece(a).isRotatable() && getPiece(a).hasMovesRemaining();
+	}
+	
+	public boolean canBeFired(Position a, Projectile p) {
+		return hasPiece(a) 
+			&& ((getPiece(a) instanceof Slingshot && p == Projectile.ROCK) || 
+				(getPiece(a) instanceof Obelisk   && p != Projectile.ROCK))
+			&& getPiece(a).hasMovesRemaining()
+			&& !getPiece(a).hasFired();
 	}
 
 	public void rotatePiece(Position a, Rotation d) {
@@ -233,7 +274,7 @@ public final class Board {
 	 * @return True if a hittable piece is there, false otherwise.
 	 */
 	public boolean hasHittablePiece(Position p) {
-		return hasPiece(p) && getPiece(p).getHitPoints() > 0;
+		return hasPiece(p);
 	}
 
 	/**
@@ -266,11 +307,115 @@ public final class Board {
 			else 
 				d = null;
 		}
-		if (isOnBoard(pos) && hasHittablePiece(pos))
-			getPiece(pos).hit(p);
+		
+		// onProjectileFired needs to fire before any spell effect listeners
+		// so the projectileAnim can activate and the subsequent events appear
+		// after the animation completes
 		for (BoardListener listener : listeners)
 			listener.onProjectileFired(path, dirs, p);
+
+		if (isOnBoard(pos) && hasHittablePiece(pos)) {
+			Piece target = getPiece(pos);
+			switch (p) {
+			case FIRE:
+				if (target instanceof Torch) {
+					Torch torch = (Torch) target;
+					if (!torch.isLit() && !torch.shielded && torch.hitPoints > 0) {
+						torch.setLit(true);
+						for (BoardListener listener : listeners)
+							listener.onFireLit(pos);
+					}
+				} else if (!(target instanceof Boulder || target instanceof Obelisk)) {
+					target.setBurned(true);
+					target.hitPoints = 0;
+				}
+				break;
+			case WATER:
+				if (target instanceof Torch) {
+					Torch torch = (Torch) target;
+					if (torch.isLit() && !target.shielded) {
+						torch.setLit(false);
+						for (BoardListener listener : listeners)
+							listener.onFireUnlit(pos);
+					}
+				}
+				break;
+			case ROOT:
+				if (!(target instanceof Boulder || target instanceof Obelisk)) {
+					if (!target.hasRoots() && !target.shielded) {
+						target.setRoots(true);
+						for (BoardListener listener : listeners)
+							listener.onRooted(pos);
+					}
+				}
+				break;
+			case SHIELD:
+				if (!target.shielded) { 
+					if (target instanceof Torch) {
+						Torch torch = (Torch) target;
+						if (torch.isLit() && !target.shielded) {
+							torch.setLit(false);
+							for (BoardListener listener : listeners)
+								listener.onFireUnlit(pos);
+						}
+					}
+					target.shielded = true;
+					target.shieldCounter = SHIELD_COUNTER_START;
+					for (BoardListener listener : listeners)
+						listener.onPieceShielded(pos);
+				}
+				break;
+			case STUN:
+				if (target instanceof Torch) {
+					Torch torch = (Torch) target;
+					if (torch.isLit() && !target.shielded) {
+						torch.setLit(false);
+						for (BoardListener listener : listeners)
+							listener.onFireUnlit(pos);
+					}
+				}
+				target.stunned = true;
+				target.stunCounter = STUN_COUNTER_START;
+				for (BoardListener listener : listeners)
+					listener.onPieceStunned(pos);
+				break;
+			case HEAL:
+				if (!target.shielded) {
+					if (target.getHitPoints() < target.getMaxHitPoints()) {
+						++target.hitPoints;
+					}
+					if (target.isStunned()) {
+						target.stunned = false;
+						for (BoardListener listener : listeners)
+							listener.onPieceUnstunned(pos);
+					}
+					if (target.hasRoots()) {
+						target.setRoots(false);
+						for (BoardListener listener : listeners)
+							listener.onUnrooted(pos);
+					}
+				}
+				break;
+			case ROCK:
+				if (target instanceof Torch) {
+					Torch torch = (Torch) target;
+					if (torch.isLit() && !target.shielded) {
+						torch.setLit(false);
+						for (BoardListener listener : listeners)
+							listener.onFireUnlit(pos);
+					}
+				}
+				if (target.hitPoints > 0)
+					--target.hitPoints;
+				break;
+			default:
+				Log.e(TAG, "unhandled projectile: " + p.toString());
+				break;
+			}
+		}
 		--movesRemaining;
+		piece.moves++;
+		piece.fired = true;
 		if (movesRemaining == 0)
 			nextPlayer();
 	}
@@ -323,10 +468,19 @@ public final class Board {
 	 * @return
 	 */
 	public boolean isValidMove(Position a, Position b) {
-		return isOnBoard(a) && isOnBoard(b) && hasPiece(a)
-				&& (!hasPiece(b) || getPiece(a).canTake(getPiece(b)))
-				&& getPiece(a).getBelongsTo().equals(getWhoseTurn())
-				&& getDistance(a, b) == 1;
+		if (isOnBoard(a) && isOnBoard(b) && hasPiece(a)) {
+			Piece piece = getPiece(a);
+			return (!hasPiece(b) || piece.canTake(getPiece(b)))
+				&& piece.getBelongsTo().equals(getWhoseTurn())
+				&& getDistance(a, b) == 1
+				&& piece.getMoves() < piece.getMovesPerTurn()
+				&& !piece.hasRoots() 
+				&& !piece.isStunned() 
+				&& !piece.isBurned() 
+				&& !(piece.getHitPoints() == 0);
+		} else {
+			return false;
+		}
 	}
 
 	/**

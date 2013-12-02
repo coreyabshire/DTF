@@ -6,8 +6,10 @@ import static edu.purdue.dtf.game.Rotation.COUNTER_CLOCKWISE;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 
 import javax.microedition.khronos.egl.EGL10;
 import javax.microedition.khronos.egl.EGLConfig;
@@ -44,7 +46,7 @@ import edu.purdue.dtf.game.Piece;
 import edu.purdue.dtf.game.Position;
 import edu.purdue.dtf.game.Projectile;
 import edu.purdue.dtf.game.Rotation;
-import edu.purdue.dtf.game.Slingshot;
+import edu.purdue.dtf.game.Torch;
 
 /**
  * GameView takes care of drawing and receiving user input. It is also
@@ -111,27 +113,53 @@ public final class GameView extends GLSurfaceView implements OnTouchListener,
 	// Win overlays are displayed when somebody wins the game.
 	private Map<String, Object3D> winOverlays;
 
-	private Object3D projectile = null;
+	private Map<String,Object3D> projectiles = null;
 
-	private SimpleVector projectileVelocity = new SimpleVector(0.0f, 0.1f, 0.0f);
-	private List<Position> projectilePath = null;
-	private List<Direction> projectileDirs = null;
-	private int projectileMilestone = 0;
-	private boolean projectileActive = false;
-	private final float projectileSpeed = 0.2f;
+	private ProjectileAnim projectileAnim;
+	
+	private Map<Integer,ParticleManager> fires;
+	
+	private Object3D rootIndicatorTemplate;
+	private Object3D shieldIndicatorTemplate;
+	private Object3D stunIndicatorTemplate;
+	
+	private Map<Integer,Object3D> rootIndicator = new HashMap<Integer,Object3D>();
+	private Map<Integer,Object3D> shieldIndicator = new HashMap<Integer,Object3D>();
+	private Map<Integer,Object3D> stunIndicator = new HashMap<Integer,Object3D>();
+	
+	private final static int PARTICLE_COUNT = 1;
 
+	private Queue<Runnable> projectileCompleteQueue = new LinkedList<Runnable>();
+
+	private void queueProjectileCompleteEvent(Runnable runnable) {
+		projectileCompleteQueue.add(runnable);
+	}
+	
 	// Stores the objects making up the side panels. One per player.
 	private class ActionPanel {
-		Object3D rotateCW = null;
-		Object3D rotateCCW = null;
-		Object3D shootRock = null;
+		Map<String,Object3D> icons;
 
-		// other spells and capabilities
+		ActionPanel() {
+			icons = new HashMap<String,Object3D>();
+		}
 
 		void addToWorld(World world) {
-			world.addObject(rotateCW);
-			world.addObject(rotateCCW);
-			world.addObject(shootRock);
+			for (Object3D icon : icons.values()) {
+				world.addObject(icon);
+			}
+		}
+		
+		String getAction(Position pos) {
+			for (String key : icons.keySet()) {
+				Object3D icon = icons.get(key);
+				float x = (float) pos.x;
+				float y = (float) pos.y;
+				SimpleVector v = icon.getTranslation();
+				if (v.x == x && v.y == y) {
+					return key;
+				}
+			}
+			return null;
 		}
 	}
 
@@ -269,8 +297,9 @@ public final class GameView extends GLSurfaceView implements OnTouchListener,
 	 * happen on the render thread instead of the draw thread.
 	 */
 	private void updateDrawState() {
-		if (projectileActive)
+		if (projectileAnim.isActive())
 			updateProjectile();
+		updateFire();
 	}
 
 	/**
@@ -333,8 +362,7 @@ public final class GameView extends GLSurfaceView implements OnTouchListener,
 				final Object3D piece = pieces[a.x][a.y];
 
 				if (getPiece(b) != null) {
-					world.removeObject(getPiece(b));
-					pieces[b.x][b.y] = null;
+					clearPiece(b);
 				}
 
 				pieces[a.x][a.y] = null;
@@ -343,6 +371,18 @@ public final class GameView extends GLSurfaceView implements OnTouchListener,
 				piece.clearTranslation();
 				piece.translate(template.getTranslation());
 				piece.translate(b.x, b.y, 0.0f);
+				
+				ParticleManager fire = fires.get(piece.getID());
+				if (fire != null) {
+					// TODO Fix this nastiness...
+					SimpleVector fpos = new SimpleVector(b.x+0.15f, b.y-0.15f, -0.2f);
+					fire.move(fpos);
+				}
+				
+				if (shieldIndicator.containsKey(piece.getID())) {
+					shieldIndicator.get(piece.getID()).clearTranslation();
+					shieldIndicator.get(piece.getID()).translate(b.x, b.y, 0.0f);
+				}
 
 				selected = null;
 				selector.setVisibility(false);
@@ -370,15 +410,8 @@ public final class GameView extends GLSurfaceView implements OnTouchListener,
 			final List<Direction> dirs, final Projectile proj) {
 		queueEvent(new Runnable() {
 			public void run() {
-				projectile.clearTranslation();
-				projectilePath = path;
-				projectileDirs = dirs;
-				projectile.translate(getPiece(selected).getTranslation());
-				projectileVelocity = new SimpleVector(dirs.get(0).getVector());
-				projectileVelocity.scalarMul(projectileSpeed);
-				projectileMilestone = 0;
-				projectileActive = true;
-				projectile.setVisibility(true);
+				projectileAnim.fire(projectiles.get(proj.toString()), 
+						getPiece(selected).getTranslation(), path, dirs, proj);
 			}
 		});
 	}
@@ -409,38 +442,53 @@ public final class GameView extends GLSurfaceView implements OnTouchListener,
 	 * If it has reached its destination, handles appropriate actions.
 	 */
 	private void updateProjectile() {
-		final float closeEnough = 0.2f;
-		SimpleVector pos = projectile.getTranslation();
-		SimpleVector next = projectilePath.get(projectileMilestone + 1)
-				.toVector();
-		if (pos.distance(next) <= closeEnough) {
-			if (projectileMilestone + 1 == projectilePath.size() - 1) {
-				projectile.setVisibility(false);
-				projectileActive = false;
-				selected = null;
-				selector.setVisibility(false);
-				Position position = Position.valueOf(pos);
-				if (board.isOnBoard(position)) {
-					Object3D piece = getPiece(position);
-					if (piece != null) {
-						piece.setTexture(getTexture(board.getPiece(position)));
-						checkGameOver();
-						updateTurnIndicator();
-					}
-				}
-			} else {
-				++projectileMilestone;
-				projectileVelocity = new SimpleVector(projectileDirs.get(
-						projectileMilestone).getVector());
-				projectileVelocity.scalarMul(projectileSpeed);
-				projectile.clearTranslation();
-				projectile.translate(projectilePath.get(projectileMilestone)
-						.toVector());
+		
+		projectileAnim.update();
+		
+		if (!projectileAnim.isActive()) {
+			while (!projectileCompleteQueue.isEmpty()) {
+				Runnable runnable = projectileCompleteQueue.remove();
+				runnable.run();
 			}
-		} else {
-			projectile.translate(projectileVelocity);
+			selected = null;
+			selector.setVisibility(false);
+			Position position = projectileAnim.getPosition();
+			if (board.isOnBoard(position)) {
+				Object3D piece3D = getPiece(position);
+				if (piece3D != null) {
+					Piece piece = board.getPiece(position);
+					String texture = getTexture(piece);
+					piece3D.setTexture(texture);
+					checkGameOver();
+					updateTurnIndicator();
+				}
+			}
 		}
-
+	}
+	
+	private void updateFire() {
+		for (Integer id : fires.keySet()) {
+			ParticleManager pm = fires.get(id);
+			if (System.currentTimeMillis() - pm.lastUpdate > 30) {
+				//cngcnt++;
+	
+				//SimpleVector org = new SimpleVector(2, 1.4, -1);
+				//box.setOrigin(org);
+	
+				for (int i = 0; i < PARTICLE_COUNT; i++) {
+					SimpleVector vel = new SimpleVector(
+							1 - Math.random() * 2, 
+							1 - Math.random() * 2,
+							1 - Math.random() * 2);
+					vel.scalarMul(0.01f);
+					pm.addParticle(world, vel);
+				}
+				//cnt += 0.04;
+	
+				pm.update(1);
+				pm.lastUpdate = System.currentTimeMillis();
+			}
+		}
 	}
 
 	/**
@@ -500,18 +548,26 @@ public final class GameView extends GLSurfaceView implements OnTouchListener,
 			if (selected.equals(move)) {
 				// choosing same square deselects the piece
 				queueDeselectPiece();
-			} else if (move.x == -2 && move.y == 4
-					&& board.isRotatable(selected)) {
-				board.rotatePiece(selected, COUNTER_CLOCKWISE);
-			} else if (move.x == -1 && move.y == 4
-					&& board.isRotatable(selected)) {
-				board.rotatePiece(selected, CLOCKWISE);
-			} else if (move.x == -2 && move.y == 3
-					&& board.getPiece(selected) instanceof Slingshot) {
-				// fire rock
-				board.firePiece(selected, Projectile.ROCK);
-			} else if (board.isValidMove(selected, move)) {
-				board.movePiece(selected, move);
+			} else {
+				Piece piece = board.getPiece(selected);
+				ActionPanel panel = actionPanels.get(board.getWhoseTurn());
+				String action = panel.getAction(move);
+				if (action != null) {
+					if (action.equals("ROTATECCW") && board.isRotatable(selected)) {
+						board.rotatePiece(selected, COUNTER_CLOCKWISE);
+					}
+					else if (action.equals("ROTATECW") && board.isRotatable(selected)) {
+						board.rotatePiece(selected, CLOCKWISE);
+					}
+					else {
+						Projectile proj = Projectile.valueOf(action);
+						if (board.canBeFired(selected, proj)) {
+							board.firePiece(selected, proj);
+						}
+					}
+				} else if (board.isValidMove(selected, move)) {
+					board.movePiece(selected, move);
+				}
 			}
 		}
 		return true;
@@ -696,7 +752,9 @@ public final class GameView extends GLSurfaceView implements OnTouchListener,
 		initTurnIndicator();
 		initWinOverlays();
 		initActionPanels();
+		initProjectiles();
 		initPieces();
+		initStatusIndicators();
 		updateTurnIndicator();
 		logAllTextureNames();
 		initCamera();
@@ -712,6 +770,16 @@ public final class GameView extends GLSurfaceView implements OnTouchListener,
 
 	}
 
+	private void initStatusIndicators() throws IOException {
+		rootIndicatorTemplate = loadObject3D(R.raw.roots);
+		rootIndicatorTemplate.build();
+		shieldIndicatorTemplate = loadObject3D(R.raw.shield);
+		shieldIndicatorTemplate.setTexture("shield");
+		stunIndicatorTemplate = loadObject3D(R.raw.stun);
+		stunIndicatorTemplate.setTexture("stun");
+		
+	}
+	
 	private void initSelector() throws IOException {
 		selector = loadObject3D(R.raw.selection);
 		selector.strip();
@@ -743,17 +811,79 @@ public final class GameView extends GLSurfaceView implements OnTouchListener,
 		ActionPanel r = new ActionPanel();
 		actionPanels.put("G", g);
 		actionPanels.put("R", r);
-		g.rotateCCW = loadObject3D(R.raw.rotate);
-		g.rotateCW = g.rotateCCW.cloneObject();
-		g.rotateCCW.translate(new SimpleVector(-2.0f, 4.0f, 0.0f));
-		g.rotateCW.translate(new SimpleVector(-1.0f, 4.0f, 0.0f));
-		g.rotateCW.rotateY(PI);
-		g.shootRock = loadObject3D(R.raw.rock);
-		g.shootRock.translate(new SimpleVector(-2.0f, 3.0f, 0.0f));
+		
+		addColorTexture("FIRE", new RGBColor(255, 0, 0));
+		g.icons.put("FIRE", loadObject3D(R.raw.rock));
+		g.icons.get("FIRE").translate(new SimpleVector(-2.0f, 0.0f, 0.0f));
+		g.icons.get("FIRE").scale(0.50f);
+		g.icons.get("FIRE").setTexture("FIRE");
+		
+		addColorTexture("WATER", new RGBColor(0, 0, 255));
+		g.icons.put("WATER", loadObject3D(R.raw.rock));
+		g.icons.get("WATER").translate(new SimpleVector(-1.0f, 0.0f, 0.0f));
+		g.icons.get("WATER").scale(0.50f);
+		g.icons.get("WATER").setTexture("WATER");
+		
+		addColorTexture("ROOT", new RGBColor(119, 51, 0));
+		g.icons.put("ROOT", loadObject3D(R.raw.rock));
+		g.icons.get("ROOT").translate(new SimpleVector(-2.0f, 1.0f, 0.0f));
+		g.icons.get("ROOT").scale(0.50f);
+		g.icons.get("ROOT").setTexture("ROOT");
+		
+		addColorTexture("SHIELD", new RGBColor(255, 153, 0));
+		g.icons.put("SHIELD", loadObject3D(R.raw.rock));
+		g.icons.get("SHIELD").translate(new SimpleVector(-1.0f, 1.0f, 0.0f));
+		g.icons.get("SHIELD").scale(0.50f);
+		g.icons.get("SHIELD").setTexture("SHIELD");
+		
+		addColorTexture("STUN", new RGBColor(255, 255, 0));
+		g.icons.put("STUN", loadObject3D(R.raw.rock));
+		g.icons.get("STUN").translate(new SimpleVector(-2.0f, 2.0f, 0.0f));
+		g.icons.get("STUN").scale(0.50f);
+		g.icons.get("STUN").setTexture("STUN");
+		
+		addColorTexture("HEAL", new RGBColor(0, 255, 255));
+		g.icons.put("HEAL", loadObject3D(R.raw.rock));
+		g.icons.get("HEAL").translate(new SimpleVector(-1.0f, 2.0f, 0.0f));
+		g.icons.get("HEAL").scale(0.50f);
+		g.icons.get("HEAL").setTexture("HEAL");
+		
+		g.icons.put("ROCK", loadObject3D(R.raw.rock));
+		g.icons.get("ROCK").translate(new SimpleVector(-2.0f, 3.0f, 0.0f));
+		g.icons.get("ROCK").scale(0.50f);
+		
+		g.icons.put("ROTATECCW", loadObject3D(R.raw.rotate));
+		g.icons.get("ROTATECCW").scale(0.75f);
+		g.icons.put("ROTATECW", g.icons.get("ROTATECCW").cloneObject());
+		g.icons.get("ROTATECCW").translate(new SimpleVector(-2.0f, 4.0f, 0.0f));
+		g.icons.get("ROTATECW").translate(new SimpleVector(-1.0f, 4.0f, 0.0f));
+		g.icons.get("ROTATECW").rotateY(PI);
+		
+		for (String key : g.icons.keySet()) {
+			Object3D gIcon = g.icons.get(key);
+			Object3D rIcon = gIcon.cloneObject();
+			SimpleVector gPos = gIcon.getTranslation();
+			SimpleVector rPos = new SimpleVector(gPos.x * -1 + 10, 8.0f - gPos.y, 0.0f);
+			rIcon.rotateZ(PI);
+			rIcon.clearTranslation();
+			rIcon.translate(rPos);
+			r.icons.put(key, rIcon);
+		}
+		
 		g.addToWorld(world);
-		projectile = g.shootRock.cloneObject();
-		projectile.scale(0.25f);
-		world.addObject(projectile);
+		r.addToWorld(world);
+	}
+	
+	private void initProjectiles() {
+		projectileAnim = new ProjectileAnim();
+		projectiles = new HashMap<String,Object3D>();
+		ActionPanel panel = actionPanels.get("G");
+		for (Projectile proj : Projectile.values()) {
+			Object3D projectile = panel.icons.get(proj.name()).cloneObject();
+			projectile.scale(0.50f);
+			world.addObject(projectile);
+			projectiles.put(proj.name(), projectile);
+		}
 	}
 
 	private void initWinOverlay(String key, int id) throws IOException {
@@ -775,6 +905,24 @@ public final class GameView extends GLSurfaceView implements OnTouchListener,
 		initWinOverlay("TIE", R.raw.win_tie);
 	}
 
+	private void clearPiece(Position pos) {
+		int x = pos.x;
+		int y = pos.y;
+		int id = pieces[x][y].getID();
+		if (fires.containsKey(id)) {
+			ParticleManager fire = fires.get(id);
+			fire.remove(world);
+			fires.remove(id);
+		}
+		if (rootIndicator.containsKey(id)) {
+			Object3D indicator = rootIndicator.get(id);
+			world.removeObject(indicator);
+			rootIndicator.remove(id);
+		}
+		world.removeObject(pieces[x][y]);
+		pieces[x][y] = null;
+	}
+	
 	/**
 	 * Removes all pieces from the world.
 	 */
@@ -782,13 +930,12 @@ public final class GameView extends GLSurfaceView implements OnTouchListener,
 		for (int y = 0; y < board.getHeight(); ++y) {
 			for (int x = 0; x < board.getWidth(); ++x) {
 				if (pieces[x][y] != null) {
-					world.removeObject(pieces[x][y]);
-					pieces[x][y] = null;
+					clearPiece(new Position(x, y));
 				}
 			}
 		}
 	}
-
+	
 	/**
 	 * Initializes the 3D objects representing the pieces on the board.
 	 * 
@@ -800,6 +947,7 @@ public final class GameView extends GLSurfaceView implements OnTouchListener,
 		} else {
 			clearPieces();
 		}
+		fires = new HashMap<Integer,ParticleManager>();
 		for (int y = 0; y < board.getHeight(); ++y) {
 			for (int x = 0; x < board.getWidth(); ++x) {
 				Position p = new Position(x, y);
@@ -812,14 +960,29 @@ public final class GameView extends GLSurfaceView implements OnTouchListener,
 									: "red.png");
 					pieces[x][y].build();
 					pieces[x][y].setRotationPivot(SimpleVector.ORIGIN);
-					pieces[x][y].rotateZ(-piece.getDirection().getAngle());
-					pieces[x][y].translate((float) x, (float) y, 0.0f);
+					if (piece.isRotatable()) {
+						pieces[x][y].rotateZ(-piece.getDirection().getAngle());
+					}
+					SimpleVector pos = new SimpleVector((float) x, (float) y, 0.0f);
+					pieces[x][y].translate(pos);
 					world.addObject(pieces[x][y]);
+					if (piece instanceof Torch) {
+						SimpleVector fpos = new SimpleVector((float) x+0.15, (float) y-0.15, -0.2f);
+						ParticleManager fire = new ParticleManager(fpos);
+						fires.put(pieces[x][y].getID(), fire);
+						Log.d(TAG, "added fire " + pieces[x][y].getID());
+					}
 				}
 			}
 		}
 	}
 
+	private void addColorTexture(String name, RGBColor color) {
+		Texture tex = new Texture(256, 256, color);
+		TextureManager.getInstance().addTexture(name, tex);
+		Log.d(TAG, String.format("added color texture: %s", name));
+	}
+	
 	/**
 	 * Loads a texture in from a drawable resource, resizing as specified.
 	 * 
@@ -869,6 +1032,131 @@ public final class GameView extends GLSurfaceView implements OnTouchListener,
 		loadTexture("win_gold.png", R.drawable.win_gold, 512, 512);
 		loadTexture("win_red.png", R.drawable.win_red, 512, 512);
 		loadTexture("win_tie.png", R.drawable.win_tie, 512, 512);
+		loadTexture("particles", R.drawable.particles, 512, 512);
+		loadTexture("roots.png", R.drawable.roots, 512, 512);
+		addColorTexture("stun", new RGBColor(255, 0, 255));
+		addColorTexture("shield", new RGBColor(255, 128, 0));
+	}
+
+	@Override
+	public void onFireUnlit(final Position a) {
+		queueProjectileCompleteEvent(new Runnable() {
+			public void run() {
+				SimpleVector fpos = new SimpleVector((float) a.x+0.15, (float) a.y-0.15, -0.2f);
+				ParticleManager fire = fires.get(pieces[a.x][a.y].getID());
+				fire.remove(world);
+				fires.remove(pieces[a.x][a.y].getID());
+				Log.d(TAG, "removed fire " + pieces[a.x][a.y].getID());
+			}
+		});
+	}
+
+	@Override
+	public void onFireLit(final Position a) {
+		queueProjectileCompleteEvent(new Runnable() {
+			public void run() {
+				SimpleVector fpos = new SimpleVector((float) a.x+0.15, (float) a.y-0.15, -0.2f);
+				ParticleManager fire = new ParticleManager(fpos);
+				fires.put(pieces[a.x][a.y].getID(), fire);
+				Log.d(TAG, "added fire " + pieces[a.x][a.y].getID());
+			}
+		});
+	}
+
+	@Override
+	public void onRooted(final Position a) {
+		queueProjectileCompleteEvent(new Runnable() {
+			public void run() {
+				SimpleVector rpos = new SimpleVector((float) a.x, (float) a.y, 0.0f);
+				Object3D indicator = rootIndicatorTemplate.cloneObject();
+				indicator.translate(rpos);
+				world.addObject(indicator);
+				indicator.setVisibility(true);
+				rootIndicator.put(pieces[a.x][a.y].getID(), indicator);
+				Log.d(TAG, "rooted " + pieces[a.x][a.y].getID());
+			}
+		});
+	}
+
+	@Override
+	public void onUnrooted(final Position a) {
+		queueProjectileCompleteEvent(new Runnable() {
+			public void run() {
+				Object3D indicator = rootIndicator.get(pieces[a.x][a.y].getID());
+				indicator.setVisibility(false);
+				world.removeObject(indicator);
+				rootIndicator.remove(pieces[a.x][a.y].getID());
+				Log.d(TAG, "unrooted " + pieces[a.x][a.y].getID());
+			}
+		});
+	}
+
+	@Override
+	public void onPieceStunned(final Position a) {
+		queueProjectileCompleteEvent(new Runnable() {
+			public void run() {
+				SimpleVector rpos = new SimpleVector((float) a.x, (float) a.y, 0.0f);
+				Object3D indicator = stunIndicatorTemplate.cloneObject();
+				indicator.translate(rpos);
+				world.addObject(indicator);
+				indicator.setVisibility(true);
+				stunIndicator.put(pieces[a.x][a.y].getID(), indicator);
+				Log.d(TAG, "stunned " + pieces[a.x][a.y].getID());
+			}
+		});
+	}
+
+	@Override
+	public void onPieceUnstunned(final Position a) {
+		queueProjectileCompleteEvent(new Runnable() {
+			public void run() {
+				Object3D indicator = stunIndicator.get(pieces[a.x][a.y].getID());
+				indicator.setVisibility(false);
+				world.removeObject(indicator);
+				stunIndicator.remove(pieces[a.x][a.y].getID());
+				Log.d(TAG, "unstunned " + pieces[a.x][a.y].getID());
+			}
+		});
+	}
+
+	@Override
+	public void onPieceShielded(final Position a) {
+		queueProjectileCompleteEvent(new Runnable() {
+			public void run() {
+				SimpleVector rpos = new SimpleVector((float) a.x, (float) a.y, 0.0f);
+				Object3D indicator = shieldIndicatorTemplate.cloneObject();
+				indicator.translate(rpos);
+				world.addObject(indicator);
+				indicator.setVisibility(true);
+				shieldIndicator.put(pieces[a.x][a.y].getID(), indicator);
+				Log.d(TAG, "shielded " + pieces[a.x][a.y].getID());
+			}
+		});
+	}
+
+	@Override
+	public void onPieceUnshielded(final Position a) {
+		queueProjectileCompleteEvent(new Runnable() {
+			public void run() {
+				Object3D indicator = shieldIndicator.get(pieces[a.x][a.y].getID());
+				indicator.setVisibility(false);
+				world.removeObject(indicator);
+				shieldIndicator.remove(pieces[a.x][a.y].getID());
+				Log.d(TAG, "unshielded " + pieces[a.x][a.y].getID());
+			}
+		});
+	}
+
+	@Override
+	public void onPieceBurned(Position a) {
+		// TODO Auto-generated method stub
+		
+	}
+
+	@Override
+	public void onPieceUnburned(Position a) {
+		// TODO Auto-generated method stub
+		
 	}
 
 }

@@ -7,7 +7,7 @@ public enum Projectile {
 	STUN,
 	ROOT,
 	SHIELD,
-	REBUILD,
+	HEAL,
 	ROCK;
 	
 }

@@ -11,4 +11,9 @@ public final class Boulder extends Piece {
 		return 4;
 	}
 	
+	@Override
+	public int getMovesPerTurn() {
+		return 1;
+	}
+	
 }

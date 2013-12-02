@@ -41,4 +41,24 @@ public interface BoardListener {
 	public void onProjectileFired(List<Position> path, List<Direction> dirs,
 			Projectile projectile);
 
+	
+	public void onFireUnlit(Position a);
+	
+	public void onFireLit(Position a);
+	
+	public void onRooted(Position a);
+	
+	public void onUnrooted(Position a);
+	
+	public void onPieceStunned(Position a);
+	
+	public void onPieceUnstunned(Position a);
+	
+	public void onPieceShielded(Position a);
+	
+	public void onPieceUnshielded(Position a);
+	
+	public void onPieceBurned(Position a);
+	
+	public void onPieceUnburned(Position a);
 }

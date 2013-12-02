@@ -11,4 +11,9 @@ public final class Obelisk extends RotatablePiece {
 		return 2;
 	}
 	
+	@Override
+	public int getMovesPerTurn() {
+		return 2;
+	}
+	
 }
