@@ -6,3 +6,5 @@ the main Eclipse project directory, DTF, along with other directories
 and files critical to development of the game.
 
 Access the Trello board here: https://trello.com/b/LRtCoQCN
+
+To build, you'll need [jPCT-ae](http://www.jpct.net/jpct-ae/).
